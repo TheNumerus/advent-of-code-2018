@@ -1,5 +1,3 @@
-#![feature(proc_macro_hygiene)]
-
 use anyhow::{Context, Result};
 use pico_args::Arguments;
 use std::time::Instant;
