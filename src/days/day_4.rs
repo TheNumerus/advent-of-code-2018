@@ -1,3 +1,5 @@
+use nom::bytes::complete::tag;
+use nom::sequence::tuple;
 use nom::IResult;
 use std::collections::HashMap;
 
@@ -12,9 +14,7 @@ struct Timestamp {
 
 impl Timestamp {
     fn parse(i: &str) -> IResult<&str, Self> {
-        use nom::bytes::complete::tag;
         use nom::character::complete::*;
-        use nom::sequence::tuple;
 
         let (i, (_, year, _, month, _, day, _, hour, _, minute, _)) = tuple((
             char('['),
@@ -59,10 +59,8 @@ enum GuardAction {
 impl GuardAction {
     fn parse(i: &str) -> IResult<&str, Self> {
         use nom::branch::alt;
-        use nom::bytes::complete::tag;
         use nom::character::complete::digit1;
         use nom::combinator::map;
-        use nom::sequence::tuple;
         let (i, state) = alt((
             map(tag("wakes up"), |_| Self::Wakes),
             map(tag("falls asleep"), |_| Self::Sleeps),
