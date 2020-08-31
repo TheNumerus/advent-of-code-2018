@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-const INPUT: &str = include_str!("day_2_input");
+const INPUT: &str = include_str!("../inputs/day_2_input");
 
 pub fn solve() {
     let lines = INPUT.split_whitespace();

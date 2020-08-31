@@ -1,6 +1,6 @@
 use nom::IResult;
 
-const INPUT: &str = include_str!("day_3_input");
+const INPUT: &str = include_str!("../inputs/day_3_input");
 
 #[derive(Debug)]
 struct Claim {

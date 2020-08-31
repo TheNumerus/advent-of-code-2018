@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-const INPUT: &str = include_str!("day_1_input");
+const INPUT: &str = include_str!("../inputs/day_1_input");
 
 pub fn solve() {
     let mut start = 0;

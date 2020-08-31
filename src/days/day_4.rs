@@ -73,7 +73,7 @@ impl GuardAction {
     }
 }
 
-const INPUT: &str = include_str!("day_4_input");
+const INPUT: &str = include_str!("../inputs/day_4_input");
 
 pub fn solve() {
     let shifts = get_parsed_shifts();

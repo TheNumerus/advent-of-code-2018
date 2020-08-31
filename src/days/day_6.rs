@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use nom::IResult;
 
-const INPUT: &str = include_str!("day_6_input");
+const INPUT: &str = include_str!("../inputs/day_6_input");
 
 #[derive(Debug)]
 struct Coords(u32, u32);

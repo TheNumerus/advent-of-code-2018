@@ -1,4 +1,4 @@
-const INPUT: &str = include_str!("day_5_input");
+const INPUT: &str = include_str!("../inputs/day_5_input");
 
 pub fn solve() {
     let mut polymer = INPUT.to_owned();
