@@ -31,6 +31,12 @@ fn main() -> Result<()> {
             5 => day!(day_5),
             6 => day!(day_6),
             7 => day!(day_7),
+            8 => day!(day_8),
+            9 => day!(day_9),
+            10 => day!(day_10),
+            11 => day!(day_11),
+            12 => day!(day_12),
+            13 => day!(day_13),
             _ => anyhow::bail!("this day is not yet implemented"),
         }
     };

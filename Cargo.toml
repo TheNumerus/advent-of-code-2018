@@ -10,3 +10,6 @@ edition = "2018"
 pico-args = "0.3.4"
 anyhow = "1.0.32"
 nom = "5.1.2"
+
+[profile.release]
+debug = true
