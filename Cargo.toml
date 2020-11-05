@@ -9,7 +9,7 @@ edition = "2018"
 [dependencies]
 pico-args = "0.3.4"
 anyhow = "1.0.32"
-nom = "5.1.2"
+nom = "6"
 
 [profile.release]
 debug = true
