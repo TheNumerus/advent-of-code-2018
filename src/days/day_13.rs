@@ -69,11 +69,92 @@ struct Cart {
     x: usize,
     y: usize,
     turn_num: usize,
+    crashed: bool,
 }
 
 impl Cart {
     fn new(x: usize, y: usize, dir: Direction) -> Self {
-        Self { x, y, dir, turn_num: 0 }
+        Self {
+            x,
+            y,
+            dir,
+            turn_num: 0,
+            crashed: false,
+        }
+    }
+
+    pub fn move_on_map(&mut self, map: &Map) {
+        let track = map[(self.x, self.y)];
+
+        // that match would be `self` sea otherwise
+        let Cart { x, y, dir, .. } = self;
+
+        let left = (*x - 1, *y, Direction::Left);
+        let right = (*x + 1, *y, Direction::Right);
+        let up = (*x, *y - 1, Direction::Up);
+        let down = (*x, *y + 1, Direction::Down);
+
+        let (new_x, new_y, new_dir) = match (&dir, track) {
+            (Direction::Right, Tile::Track(_)) => right,
+            (Direction::Left, Tile::Track(_)) => left,
+            (Direction::Up, Tile::Track(_)) => up,
+            (Direction::Down, Tile::Track(_)) => down,
+            (Direction::Right, Tile::Turn(TurnDir::Rising)) => up,
+            (Direction::Right, Tile::Turn(TurnDir::Falling)) => down,
+            (Direction::Left, Tile::Turn(TurnDir::Rising)) => down,
+            (Direction::Left, Tile::Turn(TurnDir::Falling)) => up,
+            (Direction::Up, Tile::Turn(TurnDir::Rising)) => right,
+            (Direction::Up, Tile::Turn(TurnDir::Falling)) => left,
+            (Direction::Down, Tile::Turn(TurnDir::Rising)) => left,
+            (Direction::Down, Tile::Turn(TurnDir::Falling)) => right,
+            (Direction::Up, Tile::Intersection) => {
+                let coords = match self.turn_num % 3 {
+                    0 => left,
+                    1 => up,
+                    2 => right,
+                    _ => unreachable!(),
+                };
+                self.turn_num += 1;
+                coords
+            }
+            (Direction::Right, Tile::Intersection) => {
+                let coords = match self.turn_num % 3 {
+                    0 => up,
+                    1 => right,
+                    2 => down,
+                    _ => unreachable!(),
+                };
+                self.turn_num += 1;
+                coords
+            }
+            (Direction::Down, Tile::Intersection) => {
+                let coords = match self.turn_num % 3 {
+                    0 => right,
+                    1 => down,
+                    2 => left,
+                    _ => unreachable!(),
+                };
+                self.turn_num += 1;
+                coords
+            }
+            (Direction::Left, Tile::Intersection) => {
+                let coords = match self.turn_num % 3 {
+                    0 => down,
+                    1 => left,
+                    2 => up,
+                    _ => unreachable!(),
+                };
+                self.turn_num += 1;
+                coords
+            }
+            (_, Tile::None) => panic!("cart out of track, on [{}, {}]", x, y),
+        };
+        *self = Self {
+            x: new_x,
+            y: new_y,
+            dir: new_dir,
+            ..*self
+        };
     }
 }
 
@@ -134,6 +215,8 @@ impl Map {
         (Self { size_x, size_y, inner }, carts)
     }
 
+    // here for debugging
+    #[allow(dead_code)]
     fn render(&self, carts: &[Cart]) {
         for y in 0..self.size_y {
             for x in 0..self.size_x {
@@ -176,131 +259,73 @@ pub fn solve() {
     let (map, mut carts) = Map::from_str(INPUT);
 
     'tick: loop {
-        println!("\n\n\n\n\n");
-        map.render(&carts);
-        // list carts
-        for cart in &mut carts {
-            let Cart { dir, x, y, turn_num } = cart;
+        let mut i = 0;
+        // this isn't for loop, because we need to check all carts after any move
+        // for loop would borrow `carts` mutably for the whole loop
+        loop {
+            let (x, y);
+            {
+                let cart = &mut carts[i];
+                cart.move_on_map(&map);
+                x = cart.x;
+                y = cart.y;
+            }
 
-            //println!("cart on [{:3},{:3}], dir {:?}, turn num {}", x, y, dir, turn_num);
-
-            let (new_x, new_y) = match (&dir, map[(*x, *y)]) {
-                (Direction::Right, Tile::Track(_)) => (*x + 1, *y),
-                (Direction::Left, Tile::Track(_)) => (*x - 1, *y),
-                (Direction::Up, Tile::Track(_)) => (*x, *y - 1),
-                (Direction::Down, Tile::Track(_)) => (*x, *y + 1),
-                (Direction::Right, Tile::Turn(TurnDir::Rising)) => {
-                    *dir = Direction::Up;
-                    (*x, *y - 1)
-                }
-                (Direction::Right, Tile::Turn(TurnDir::Falling)) => {
-                    *dir = Direction::Down;
-                    (*x, *y + 1)
-                }
-                (Direction::Left, Tile::Turn(TurnDir::Rising)) => {
-                    *dir = Direction::Down;
-                    (*x, *y + 1)
-                }
-                (Direction::Left, Tile::Turn(TurnDir::Falling)) => {
-                    *dir = Direction::Up;
-                    (*x, *y - 1)
-                }
-                (Direction::Up, Tile::Turn(TurnDir::Rising)) => {
-                    *dir = Direction::Right;
-                    (*x + 1, *y)
-                }
-                (Direction::Up, Tile::Turn(TurnDir::Falling)) => {
-                    *dir = Direction::Left;
-                    (*x - 1, *y)
-                }
-                (Direction::Down, Tile::Turn(TurnDir::Rising)) => {
-                    *dir = Direction::Left;
-                    (*x - 1, *y)
-                }
-                (Direction::Down, Tile::Turn(TurnDir::Falling)) => {
-                    *dir = Direction::Right;
-                    (*x + 1, *y)
-                }
-                (Direction::Up, Tile::Intersection) => {
-                    let coords = match *turn_num % 3 {
-                        0 => {
-                            *dir = Direction::Left;
-                            (*x - 1, *y)
-                        }
-                        1 => (*x, *y - 1),
-                        2 => {
-                            *dir = Direction::Right;
-                            (*x + 1, *y)
-                        }
-                        _ => unreachable!(),
-                    };
-                    *turn_num += 1;
-                    coords
-                }
-                (Direction::Right, Tile::Intersection) => {
-                    let coords = match *turn_num % 3 {
-                        0 => {
-                            *dir = Direction::Up;
-                            (*x, *y - 1)
-                        }
-                        1 => (*x + 1, *y),
-                        2 => {
-                            *dir = Direction::Down;
-                            (*x, *y + 1)
-                        }
-                        _ => unreachable!(),
-                    };
-                    *turn_num += 1;
-                    coords
-                }
-                (Direction::Down, Tile::Intersection) => {
-                    let coords = match *turn_num % 3 {
-                        0 => {
-                            *dir = Direction::Right;
-                            (*x + 1, *y)
-                        }
-                        1 => (*x, *y + 1),
-                        2 => {
-                            *dir = Direction::Left;
-                            (*x - 1, *y)
-                        }
-                        _ => unreachable!(),
-                    };
-                    *turn_num += 1;
-                    coords
-                }
-                (Direction::Left, Tile::Intersection) => {
-                    let coords = match *turn_num % 3 {
-                        0 => {
-                            *dir = Direction::Down;
-                            (*x, *y + 1)
-                        }
-                        1 => (*x - 1, *y),
-                        2 => {
-                            *dir = Direction::Up;
-                            (*x, *y - 1)
-                        }
-                        _ => unreachable!(),
-                    };
-                    *turn_num += 1;
-                    coords
-                }
-                (_, Tile::None) => panic!("cart out of track, on [{}, {}]", x, y),
-            };
-            *x = new_x;
-            *y = new_y;
-        }
-        carts.sort_by(|a, b| a.y.cmp(&b.y).then(a.x.cmp(&b.x)));
-
-        for carts in carts.windows(2) {
-            let a = &carts[0];
-            let b = &carts[1];
-            if a.x == b.x && a.y == b.y {
-                println!("Collision on [{}:{}]", a.x, b.y);
+            let overlaps = carts.iter().filter(|c| c.x == x && c.y == y).count();
+            if overlaps == 2 {
+                println!("Collision on [{}:{}]", x, y);
                 break 'tick;
             }
+
+            i += 1;
+            if i >= carts.len() {
+                break;
+            }
         }
+
+        // every tick starts sim from the top, we need to update
+        carts.sort_by(|a, b| a.y.cmp(&b.y).then(a.x.cmp(&b.x)));
     }
 }
 
-pub fn solve_extra() {}
+pub fn solve_extra() {
+    let (map, mut carts) = Map::from_str(INPUT);
+
+    'tick: loop {
+        let mut i = 0;
+        // this isn't for loop, because we need to check all carts after any move
+        // for loop would borrow `carts` mutably for the whole loop
+        loop {
+            let (x, y);
+            {
+                let cart = &mut carts[i];
+                cart.move_on_map(&map);
+                x = cart.x;
+                y = cart.y;
+            }
+
+            let overlaps = carts.iter().filter(|c| c.x == x && c.y == y && !c.crashed).count();
+            if overlaps == 2 {
+                // mark carts as crashed
+                carts
+                    .iter_mut()
+                    .filter(|c| c.x == x && c.y == y)
+                    .for_each(|c| c.crashed = true);
+            }
+
+            i += 1;
+            if i >= carts.len() {
+                break;
+            }
+        }
+        // remove crashed carts
+        carts.retain(|c| !c.crashed);
+
+        if carts.len() == 1 {
+            println!("Last cart on [{}:{}]", carts[0].x, carts[0].y);
+            break 'tick;
+        }
+        // every tick starts sim from the top, we need to update
+        carts.sort_by(|a, b| a.y.cmp(&b.y).then(a.x.cmp(&b.x)));
+    }
+}
