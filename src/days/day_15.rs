@@ -17,6 +17,18 @@ impl Position {
     }
 }
 
+impl PartialOrd for Position {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.y.cmp(&other.y).then(self.x.cmp(&other.x)))
+    }
+}
+
+impl Ord for Position {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.partial_cmp(other).unwrap()
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq)]
 enum Tile {
     Wall,
@@ -69,30 +81,27 @@ impl Entity {
         entities.iter().filter(filter).collect::<Vec<_>>()
     }
 
-    fn locate_target(&self, reach_tree: &ReachTree, targets: &[&Entity], map: &Map) -> Option<(usize, usize)> {
+    fn locate_target(&self, reach_tree: &ReachTree, targets: &[&Entity], map: &Map) -> Option<Position> {
+        // list all targets
         let mut positions = targets
             .iter()
             .flat_map(|e| find_pos_in_range(e.pos.x, e.pos.y, map))
-            .filter(|pos| reach_tree.tree.contains_key(&Position::from_tuple(*pos)))
+            .map(Position::from_tuple)
             .collect::<Vec<_>>();
-        positions.sort();
+        positions.sort_unstable();
         positions.dedup();
 
+        // remove unreachable
+        positions.retain(|p| reach_tree.tree.contains_key(p));
+
         // find closest
-        let min = positions
-            .iter()
-            .map(|pos| reach_tree.tree.get(&Position::from_tuple(*pos)).unwrap())
-            .min();
+        let min = positions.iter().map(|pos| reach_tree.tree.get(pos).unwrap()).min();
 
-        if min.is_none() {
-            return None;
-        }
-
-        let min = min.unwrap();
+        let min = min?;
 
         let mut closest = Vec::new();
         for pos in &positions {
-            let pos_cost = reach_tree.tree.get(&Position::from_tuple(*pos));
+            let pos_cost = reach_tree.tree.get(&pos);
             if let Some(cost) = pos_cost {
                 if cost == min {
                     closest.push(pos);
@@ -104,9 +113,9 @@ impl Entity {
             return None;
         }
 
-        closest.sort_by(|(ax, ay), (bx, by)| ay.cmp(&by).then(ax.cmp(&bx)));
+        closest.sort();
 
-        return Some(*closest[0]);
+        Some(*closest[0])
     }
 
     fn analyze_turn(&self, entities: &[Entity], map: &Map) -> TurnAction {
@@ -123,34 +132,71 @@ impl Entity {
 
         let close = find_pos_in_range(self.pos.x, self.pos.y, map);
 
+        let mut min_hp = i32::MAX;
+        let mut min_pos = None;
+
         for c in &close {
+            let pos = Position::from_tuple(*c);
             for entity in &targets {
-                if entity.pos == Position::from_tuple(*c) && entity.hp > 0 {
-                    return TurnAction::AttackOn(Position::from_tuple(*c));
+                if entity.pos == pos && entity.hp > 0 {
+                    if min_hp > entity.hp {
+                        min_hp = entity.hp;
+                        min_pos = Some(pos);
+                    }
                 }
             }
         }
 
-        let distance_tree = ReachTree::build_from_pos(&Position::from_tuple(target), entities, map);
+        if let Some(pos) = min_pos {
+            return TurnAction::AttackOn(pos);
+        }
+
+        let distance_tree = ReachTree::build_from_pos(&target, entities, map);
 
         let mut closest = i32::MAX;
         let mut closest_tile = None;
 
         for tile in close {
-            let cost = distance_tree.tree.get(&Position::from_tuple(tile));
-            if let Some(cost) = cost {
-                if *cost < closest {
-                    closest = *cost;
-                    closest_tile = Some(tile);
+            let tile_pos = Position::from_tuple(tile);
+
+            if reach_tree.tree.contains_key(&tile_pos) {
+                let cost = distance_tree.tree.get(&tile_pos);
+                if let Some(cost) = cost {
+                    if *cost < closest {
+                        closest = *cost;
+                        closest_tile = Some(tile);
+                    }
                 }
             }
         }
 
-        if closest_tile.is_none() {
-            return TurnAction::Idle;
-        }
+        match closest_tile {
+            Some(pos) => {
+                let close = find_pos_in_range(pos.0, pos.1, map);
 
-        return TurnAction::MoveTo(Position::from_tuple(closest_tile.unwrap()));
+                let mut min_hp = i32::MAX;
+                let mut min_pos = None;
+
+                for c in &close {
+                    let pos = Position::from_tuple(*c);
+                    for entity in &targets {
+                        if entity.pos == pos && entity.hp > 0 {
+                            if min_hp > entity.hp {
+                                min_hp = entity.hp;
+                                min_pos = Some(pos);
+                            }
+                        }
+                    }
+                }
+
+                if let Some(att_pos) = min_pos {
+                    return TurnAction::MoveAndAttack(Position::from_tuple(pos), att_pos);
+                }
+
+                TurnAction::MoveTo(Position::from_tuple(pos))
+            }
+            None => TurnAction::Idle,
+        }
     }
 }
 
@@ -159,6 +205,7 @@ enum TurnAction {
     Idle,
     MoveTo(Position),
     AttackOn(Position),
+    MoveAndAttack(Position, Position),
 }
 
 #[derive(Debug)]
@@ -197,9 +244,10 @@ impl Map {
             x = (x + 1) % size_x;
         }
 
-        (Self { size_x, size_y, inner }, entities)
+        (Self { inner, size_x, size_y }, entities)
     }
 
+    #[allow(dead_code)]
     fn render_with_entities(&self, entities: &[Entity]) {
         let mut index;
         for y in 0..self.size_y {
@@ -211,8 +259,7 @@ impl Map {
                     Tile::Floor => {
                         let entity = entities
                             .iter()
-                            .filter(|e| e.pos == Position::from_tuple((x, y)) && e.hp > 0)
-                            .next();
+                            .find(|e| e.pos == Position::from_tuple((x, y)) && e.hp > 0);
 
                         match entity {
                             Some(e) => match e.side {
@@ -224,6 +271,22 @@ impl Map {
                     }
                 }
             }
+
+            // list entity HP
+            for x in 0..self.size_x {
+                let entity = entities
+                    .iter()
+                    .find(|e| e.pos == Position::from_tuple((x, y)) && e.hp > 0);
+
+                match entity {
+                    Some(e) => match e.side {
+                        EntityType::Goblin => print!("   G({})", e.hp),
+                        EntityType::Elf => print!("   E({})", e.hp),
+                    },
+                    None => {}
+                }
+            }
+
             println!();
         }
     }
@@ -303,11 +366,10 @@ impl ReachTree {
     }
 }
 
-pub fn solve() {
-    let (map, mut entities) = Map::from_str_with_entities(INPUT);
+fn simulate_combat(map: &Map, entities: &mut Vec<Entity>) -> (EntityType, i32) {
     let mut round = 0;
-    'turn: loop {
-        println!("Round #{}", round);
+
+    let winner = 'turn: loop {
         for cur_entity in 0..entities.len() {
             let action = {
                 let entity = &entities[cur_entity];
@@ -316,15 +378,9 @@ pub fn solve() {
                     continue;
                 }
 
-                print!(
-                    "{:?} ({} HP) @ {}x{} ",
-                    entity.side, entity.hp, entity.pos.x, entity.pos.y
-                );
-
                 let targets = entity.list_targets(&entities);
                 if targets.is_empty() {
-                    println!("finishes");
-                    break 'turn;
+                    break 'turn entity.side;
                 }
 
                 entity.analyze_turn(&entities, &map)
@@ -332,37 +388,91 @@ pub fn solve() {
 
             match action {
                 TurnAction::AttackOn(pos) => {
-                    println!("attacks on {}x{}", pos.x, pos.y);
                     let attack_power = {
                         let entity = &entities[cur_entity];
                         entity.attack
                     };
 
-                    let target = entities.iter_mut().filter(|e| e.pos == pos && e.hp > 0).next().unwrap();
+                    let target = entities.iter_mut().find(|e| e.pos == pos && e.hp > 0).unwrap();
                     target.hp = (target.hp - attack_power).max(0);
                 }
-                TurnAction::Idle => {
-                    println!("idles");
-                }
+                TurnAction::Idle => {}
                 TurnAction::MoveTo(pos) => {
-                    println!("moves to {}x{}", pos.x, pos.y);
                     let mut entity = &mut entities[cur_entity];
                     entity.pos = pos;
                 }
-            }
+                TurnAction::MoveAndAttack(move_pos, attack_pos) => {
+                    let mut entity = &mut entities[cur_entity];
+                    entity.pos = move_pos;
 
-            map.render_with_entities(&entities);
+                    let attack_power = entity.attack;
+
+                    let target = entities.iter_mut().find(|e| e.pos == attack_pos && e.hp > 0).unwrap();
+                    target.hp = (target.hp - attack_power).max(0);
+                }
+            }
         }
 
         entities.retain(|e| e.hp > 0);
 
-        entities.sort_by(|a, b| a.pos.y.cmp(&b.pos.y).then(a.pos.x.cmp(&b.pos.x)));
+        entities.sort_by(|a, b| a.pos.cmp(&b.pos));
         round += 1;
-    }
-    map.render_with_entities(&entities);
-    let total_hp = entities.iter().fold(0, |total, entity| total + entity.hp);
+    };
 
-    println!("Outcome: {} * {} = {}", round, total_hp, round * total_hp);
+    entities.retain(|e| e.hp > 0);
+
+    (winner, round)
 }
 
-pub fn solve_extra() {}
+pub fn solve() {
+    let (map, mut entities) = Map::from_str_with_entities(INPUT);
+
+    let (winner, rounds) = simulate_combat(&map, &mut entities);
+
+    let total_hp = entities.iter().fold(0, |total, entity| total + entity.hp);
+
+    println!("Combat ends after {} full rounds", rounds);
+    match winner {
+        EntityType::Goblin => print!("Goblins "),
+        EntityType::Elf => print!("Elves "),
+    }
+    println!("win with {} total hit points left", total_hp);
+
+    println!("Outcome: {} * {} = {}", rounds, total_hp, rounds * total_hp);
+}
+
+pub fn solve_extra() {
+    let (_map, entities) = Map::from_str_with_entities(INPUT);
+
+    let elves = entities.iter().filter(|e| e.side == EntityType::Elf).count();
+    let mut attack = 3;
+
+    let (winner, rounds, entities) = 'iteration: loop {
+        let (map, mut entities) = Map::from_str_with_entities(INPUT);
+
+        for entity in &mut entities {
+            if entity.side == EntityType::Elf {
+                entity.attack = attack;
+            }
+        }
+
+        let (winner, rounds) = simulate_combat(&map, &mut entities);
+
+        if winner != EntityType::Elf || entities.len() != elves {
+            attack += 1;
+        } else {
+            break 'iteration (winner, rounds, entities);
+        }
+    };
+
+    let total_hp = entities.iter().fold(0, |total, entity| total + entity.hp);
+
+    println!("Combat ends after {} full rounds", rounds);
+    match winner {
+        EntityType::Goblin => print!("Goblins "),
+        EntityType::Elf => print!("Elves "),
+    }
+    println!("win with {} total hit points left", total_hp);
+
+    println!("Outcome: {} * {} = {}", rounds, total_hp, rounds * total_hp);
+}

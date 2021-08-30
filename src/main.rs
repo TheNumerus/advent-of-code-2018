@@ -39,6 +39,7 @@ fn main() -> Result<()> {
             13 => day!(day_13),
             14 => day!(day_14),
             15 => day!(day_15),
+            16 => day!(day_16),
             _ => anyhow::bail!("this day is not yet implemented"),
         }
     };
