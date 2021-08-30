@@ -1,7 +1,6 @@
 use std::{
     collections::{HashMap, VecDeque},
     convert::TryFrom,
-    ops::Index,
 };
 
 const INPUT: &str = include_str!("../inputs/day_15_input");
@@ -13,13 +12,6 @@ struct Position {
 }
 
 impl Position {
-    fn manhattan_distiance_to(&self, other: &Position) -> usize {
-        let x = (self.x as i32 - other.x as i32).abs();
-        let y = (self.y as i32 - other.y as i32).abs();
-
-        (x + y) as usize
-    }
-
     fn from_tuple((x, y): (usize, usize)) -> Self {
         Self { x, y }
     }
@@ -52,8 +44,8 @@ enum EntityType {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Entity {
-    hp: u32,
-    attack: u32,
+    hp: i32,
+    attack: i32,
     side: EntityType,
     pos: Position,
 }
@@ -70,14 +62,14 @@ impl Entity {
 
     fn list_targets<'a>(&self, entities: &'a [Entity]) -> Vec<&'a Entity> {
         let filter = match self.side {
-            EntityType::Elf => |e: &&Entity| e.side == EntityType::Goblin,
-            EntityType::Goblin => |e: &&Entity| e.side == EntityType::Elf,
+            EntityType::Elf => |e: &&Entity| e.side == EntityType::Goblin && e.hp > 0,
+            EntityType::Goblin => |e: &&Entity| e.side == EntityType::Elf && e.hp > 0,
         };
 
         entities.iter().filter(filter).collect::<Vec<_>>()
     }
 
-    fn locate_target(&self, reach_tree: &ReachTree, targets: &[&Entity], map: &Map) -> Option<Entity> {
+    fn locate_target(&self, reach_tree: &ReachTree, targets: &[&Entity], map: &Map) -> Option<(usize, usize)> {
         let mut positions = targets
             .iter()
             .flat_map(|e| find_pos_in_range(e.pos.x, e.pos.y, map))
@@ -87,7 +79,16 @@ impl Entity {
         positions.dedup();
 
         // find closest
-        let min = positions.values().min().unwrap();
+        let min = positions
+            .iter()
+            .map(|pos| reach_tree.tree.get(&Position::from_tuple(*pos)).unwrap())
+            .min();
+
+        if min.is_none() {
+            return None;
+        }
+
+        let min = min.unwrap();
 
         let mut closest = Vec::new();
         for pos in &positions {
@@ -99,18 +100,65 @@ impl Entity {
             }
         }
 
-        dbg!(closest);
+        if closest.is_empty() {
+            return None;
+        }
 
-        todo!()
+        closest.sort_by(|(ax, ay), (bx, by)| ay.cmp(&by).then(ax.cmp(&bx)));
+
+        return Some(*closest[0]);
     }
 
-    fn move_to_target(&self, reach: &ReachTree, target: &Entity) {
-        todo!();
-    }
+    fn analyze_turn(&self, entities: &[Entity], map: &Map) -> TurnAction {
+        let targets = self.list_targets(entities);
 
-    fn attack_entity(&self, other: &mut Entity) {
-        other.hp -= self.attack;
+        let reach_tree = ReachTree::build_from_pos(&self.pos, entities, map);
+
+        let target = self.locate_target(&reach_tree, &targets, map);
+
+        if target.is_none() {
+            return TurnAction::Idle;
+        }
+        let target = target.unwrap();
+
+        let close = find_pos_in_range(self.pos.x, self.pos.y, map);
+
+        for c in &close {
+            for entity in &targets {
+                if entity.pos == Position::from_tuple(*c) && entity.hp > 0 {
+                    return TurnAction::AttackOn(Position::from_tuple(*c));
+                }
+            }
+        }
+
+        let distance_tree = ReachTree::build_from_pos(&Position::from_tuple(target), entities, map);
+
+        let mut closest = i32::MAX;
+        let mut closest_tile = None;
+
+        for tile in close {
+            let cost = distance_tree.tree.get(&Position::from_tuple(tile));
+            if let Some(cost) = cost {
+                if *cost < closest {
+                    closest = *cost;
+                    closest_tile = Some(tile);
+                }
+            }
+        }
+
+        if closest_tile.is_none() {
+            return TurnAction::Idle;
+        }
+
+        return TurnAction::MoveTo(Position::from_tuple(closest_tile.unwrap()));
     }
+}
+
+#[derive(Debug)]
+enum TurnAction {
+    Idle,
+    MoveTo(Position),
+    AttackOn(Position),
 }
 
 #[derive(Debug)]
@@ -151,14 +199,33 @@ impl Map {
 
         (Self { size_x, size_y, inner }, entities)
     }
-}
 
-impl Index<(usize, usize)> for Map {
-    type Output = Tile;
+    fn render_with_entities(&self, entities: &[Entity]) {
+        let mut index;
+        for y in 0..self.size_y {
+            for x in 0..self.size_x {
+                index = y * self.size_x + x;
 
-    fn index(&self, index: (usize, usize)) -> &Self::Output {
-        let index = index.0 + index.1 * self.size_x;
-        self.inner.index(index)
+                match self.inner[index] {
+                    Tile::Wall => print!("#"),
+                    Tile::Floor => {
+                        let entity = entities
+                            .iter()
+                            .filter(|e| e.pos == Position::from_tuple((x, y)) && e.hp > 0)
+                            .next();
+
+                        match entity {
+                            Some(e) => match e.side {
+                                EntityType::Goblin => print!("G"),
+                                EntityType::Elf => print!("E"),
+                            },
+                            None => print!(" "),
+                        }
+                    }
+                }
+            }
+            println!();
+        }
     }
 }
 
@@ -166,19 +233,20 @@ fn find_pos_in_range(x: usize, y: usize, map: &Map) -> Vec<(usize, usize)> {
     let mut output = Vec::with_capacity(4);
 
     let mut push_if_floor = |pos: (usize, usize)| {
-        if let Tile::Floor = map[pos] {
+        let index = pos.0 + pos.1 * map.size_x;
+        if let Tile::Floor = map.inner[index] {
             output.push(pos);
         }
     };
 
+    if y > 0 {
+        push_if_floor((x, y - 1));
+    }
     if x > 0 {
         push_if_floor((x - 1, y));
     }
     if x < map.size_x - 1 {
         push_if_floor((x + 1, y));
-    }
-    if y > 0 {
-        push_if_floor((x, y - 1));
     }
     if y < map.size_y - 1 {
         push_if_floor((x, y + 1));
@@ -203,7 +271,7 @@ impl ReachTree {
             for n in neighbours {
                 if !frontier.iter().any(|(x, y, _cost)| *x == n.0 && *y == n.1)
                     && !tree.contains_key(&Position { x: n.0, y: n.1 })
-                    && !entities.iter().any(|e| e.pos.x == n.0 && e.pos.y == n.1)
+                    && !entities.iter().any(|e| e.pos.x == n.0 && e.pos.y == n.1 && e.hp > 0)
                 {
                     frontier.push_back((n.0, n.1, front.2 + 1));
                 }
@@ -239,34 +307,59 @@ pub fn solve() {
     let (map, mut entities) = Map::from_str_with_entities(INPUT);
     let mut round = 0;
     'turn: loop {
-        for entity in &entities {
-            let targets = entity.list_targets(&entities);
-            if targets.is_empty() {
-                break 'turn;
-            }
+        println!("Round #{}", round);
+        for cur_entity in 0..entities.len() {
+            let action = {
+                let entity = &entities[cur_entity];
 
-            let reach_tree = ReachTree::build_from_pos(&entity.pos, &entities, &map);
+                if entity.hp <= 0 {
+                    continue;
+                }
 
-            // now select target from list
-            let mut target = entity.locate_target(&reach_tree, &targets, &map);
+                print!(
+                    "{:?} ({} HP) @ {}x{} ",
+                    entity.side, entity.hp, entity.pos.x, entity.pos.y
+                );
 
-            if let Some(ref mut target) = target {
-                // move if needed
-                let close = false;
-                entity.move_to_target(&reach_tree, &target);
+                let targets = entity.list_targets(&entities);
+                if targets.is_empty() {
+                    println!("finishes");
+                    break 'turn;
+                }
 
-                if close {
-                    entity.attack_entity(target);
+                entity.analyze_turn(&entities, &map)
+            };
+
+            match action {
+                TurnAction::AttackOn(pos) => {
+                    println!("attacks on {}x{}", pos.x, pos.y);
+                    let attack_power = {
+                        let entity = &entities[cur_entity];
+                        entity.attack
+                    };
+
+                    let target = entities.iter_mut().filter(|e| e.pos == pos && e.hp > 0).next().unwrap();
+                    target.hp = (target.hp - attack_power).max(0);
+                }
+                TurnAction::Idle => {
+                    println!("idles");
+                }
+                TurnAction::MoveTo(pos) => {
+                    println!("moves to {}x{}", pos.x, pos.y);
+                    let mut entity = &mut entities[cur_entity];
+                    entity.pos = pos;
                 }
             }
+
+            map.render_with_entities(&entities);
         }
 
-        // remove dead entities
         entities.retain(|e| e.hp > 0);
 
         entities.sort_by(|a, b| a.pos.y.cmp(&b.pos.y).then(a.pos.x.cmp(&b.pos.x)));
         round += 1;
     }
+    map.render_with_entities(&entities);
     let total_hp = entities.iter().fold(0, |total, entity| total + entity.hp);
 
     println!("Outcome: {} * {} = {}", round, total_hp, round * total_hp);
